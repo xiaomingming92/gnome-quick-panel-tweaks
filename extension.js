@@ -238,7 +238,10 @@ export default class QuickPanelTweaksExtension extends Extension {
         if (!this._boxMotionId) {
             this._boxMotionId = box.connect('motion-event', (_a, ev) => this._onMotion(ev));
             this._qsMenuClosedId = Main.panel.statusArea.quickSettings.menu.connect(
-                'menu-closed', () => this._exitEditMode());
+                'menu-closed', () => {
+                    this._clearActivePseudo();
+                    this._exitEditMode();
+                });
         }
 
         let index = 0;
@@ -493,16 +496,7 @@ export default class QuickPanelTweaksExtension extends Extension {
         });
         if (custom)
             btn.add_style_class_name('custom-item');
-        btn.connect('clicked', () => {
-            try {
-                if (custom)
-                    this._runCommand(custom.command);
-                else
-                    this._runAction(id);
-            } catch (e) {
-                logError(e, `quick-panel-tweaks: ${id} 执行失败`);
-            }
-        });
+        // 不接 clicked：这一行的点击统一由 _dispatchClick() 派发，避免和 shell 的 clicked 打架
         if (id === 'record')
             this._recordButton = btn;
         this._dynamic.set(id, btn);
@@ -654,15 +648,13 @@ export default class QuickPanelTweaksExtension extends Extension {
             return;
         }
         if (this._recording) {
-            screencast.StopScreencastRemote((_result, error) => {
-                if (error) {
-                    logError(error, 'quick-panel-tweaks: 停止录屏失败');
-                    return;
-                }
-                this._recording = false;
-                this._recordButton?.remove_style_class_name('recording');
-                this._recordButton?.child?.set_icon_name('record-screen-symbolic');
-                Main.notify('录屏', '已结束，文件在「视频 / Screencasts」');
+            screencast.StopScreencastRemote((result, error) => {
+                const ok = !error && result?.[0] !== false;
+                this._setRecordingUI(false);
+                if (ok)
+                    Main.notify('录屏', '已结束，文件在「视频 / Screencasts」');
+                else
+                    Main.notify('录屏', '停止失败（录制可能已中断），状态已复位，可重新开始');
             });
             return;
         }
@@ -671,15 +663,43 @@ export default class QuickPanelTweaksExtension extends Extension {
             {'draw-cursor': new GLib.Variant('b', true), 'framerate': new GLib.Variant('i', 30)},
             (result, error) => {
                 if (error) {
+                    // 服务里残留「正在录制」状态：先复位，UI 一起复位
+                    if (`${error.message}`.includes('AlreadyRecording')) {
+                        screencast.StopScreencastRemote(() => {
+                            this._setRecordingUI(false);
+                            Main.notify('录屏', '检测到上次录制残留状态，已复位 —— 请再点一次开始');
+                        });
+                        return;
+                    }
                     logError(error, 'quick-panel-tweaks: 开始录屏失败');
                     Main.notify('录屏失败', error.message ?? String(error));
+                    this._setRecordingUI(false);
                     return;
                 }
-                this._recording = true;
-                this._recordButton?.add_style_class_name('recording');
-                this._recordButton?.child?.set_icon_name('media-playback-stop-symbolic');
+                this._setRecordingUI(true);
                 const file = result?.[1] ? GLib.path_get_basename(result[1]) : '';
                 Main.notify('开始录屏', file ? `正在录制：${file}` : '正在录制屏幕');
             });
+    }
+
+    _setRecordingUI(on) {
+        this._recording = on;
+        const btn = this._recordButton;
+        if (!btn)
+            return;
+        if (on) {
+            btn.add_style_class_name('recording');
+            btn.child?.set_icon_name('media-playback-stop-symbolic');
+        } else {
+            btn.remove_style_class_name('recording');
+            btn.child?.set_icon_name('record-screen-symbolic');
+        }
+    }
+
+    _clearActivePseudo() {
+        const all = [this._powerToggle, ...(this._builtinButtons ?? []),
+            ...this._dynamic.values(), ...(this._editButtons ?? [])];
+        for (const btn of all)
+            btn?.remove_style_pseudo_class?.('active');
     }
 }
