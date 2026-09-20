@@ -22,6 +22,7 @@ const PROFILE_LABELS = {performance: '性能', balanced: '平衡', 'power-saver'
 const LONG_PRESS_MS = 500;      // 长按多久进入编辑态
 const DRAG_THRESHOLD = 8;       // 编辑态里移动多少像素算开始拖动
 const REMOVE_OFFSET = 44;       // 拖到该行上方这么多像素 = 移除
+const DEBUG = true;             // 调试期：把点击/录屏关键路径写进日志（稳定后可关）
 
 // shell 自带的 4 个按钮在系统栏里的顺序（截图/设置/锁屏/关机）
 const BUILTIN_IDS = ['screenshot', 'settings', 'lock', 'shutdown'];
@@ -396,6 +397,8 @@ export default class QuickPanelTweaksExtension extends Extension {
     }
 
     _dispatchClick(btn) {
+        if (DEBUG)
+            console.log(`quick-panel-tweaks: 点击 → ${btn._qptId ?? '(未知)'}`);
         // 带菜单的按钮（如“关机”按钮有 待机/重启/关机… 菜单）保持原有交互：开菜单
         if (btn.menu?.open) {
             btn.menu.open();
@@ -609,10 +612,20 @@ export default class QuickPanelTweaksExtension extends Extension {
             return;
         }
         const next = profiles[(Math.max(profiles.indexOf(active), -1) + 1) % profiles.length];
-        proxy.call('org.freedesktop.DBus.Properties', 'Set',
+        // Gio.DBusProxy.call 的签名是 (method, params, flags, timeout, cancellable, callback) 6 个参数，
+        // 方法名要写成 "接口.方法" 的点号形式
+        proxy.call('org.freedesktop.DBus.Properties.Set',
             new GLib.Variant('(ssv)', [POWER_PROFILES, 'ActiveProfile', new GLib.Variant('s', next)]),
-            null, Gio.DBusCallFlags.NONE, -1, null, null);
-        Main.notify('电源模式', `已切换到「${PROFILE_LABELS[next] ?? next}」`);
+            Gio.DBusCallFlags.NONE, -1, null,
+            (p, res) => {
+                try {
+                    p.call_finish(res);
+                    Main.notify('电源模式', `已切换到「${PROFILE_LABELS[next] ?? next}」`);
+                } catch (e) {
+                    logError(e, 'quick-panel-tweaks: 切换电源模式失败');
+                    Main.notify('电源模式', '切换失败，可右键打开电源设置');
+                }
+            });
     }
 
     // ---------- 录屏 ----------
@@ -649,8 +662,19 @@ export default class QuickPanelTweaksExtension extends Extension {
             } catch (e2) {
                 logError(e2, 'quick-panel-tweaks: 开始录屏失败');
                 Main.notify('录屏失败', `${e2.message ?? e2}`);
+                return;
             }
         }
+        // 兜底自检：1.5 秒后仍未进入录制态，就打开系统录屏界面让用户点一下
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            const live = Main.screenshotUI;
+            if (live && !live.screencastInProgress) {
+                console.warn('quick-panel-tweaks: shell 录屏入口未生效，改为打开系统录屏 UI');
+                live.open(UIMODE_SCREENCAST)?.catch?.(logError);
+                Main.notify('录屏', '系统接口没直接生效，已打开录屏界面 —— 点其中的“录制”即可');
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // 让按钮状态始终跟随 shell（含从系统 UI 发起的录制）
