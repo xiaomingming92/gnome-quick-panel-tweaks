@@ -41,13 +41,14 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21a');
+        console.log('quick-panel-tweaks: loaded build 2026-09-21b');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
         this._editMode = false;
         this._editButtons = [];
         this._screencastNotifyId = 0;
+        this._pendingProfile = null;   // 连点切档时的“乐观值”，避免读缓存滞后一拍
         this._press = null;
         this._longPressId = 0;
         this._drag = null;
@@ -149,6 +150,10 @@ export default class QuickPanelTweaksExtension extends Extension {
             this._powerProfiles = Gio.DBusProxy.new_for_bus_sync(
                 Gio.BusType.SYSTEM, Gio.DBusProxyFlags.DO_NOT_AUTO_START, null,
                 POWER_PROFILES, POWER_PROFILES_PATH, POWER_PROFILES, null);
+            // 属性真的变了就把乐观值清掉，之后以缓存为准
+            this._powerProfiles.connect('g-properties-changed', () => {
+                this._pendingProfile = null;
+            });
         } catch (e) {
             this._powerProfiles = null;
             logError(e, 'quick-panel-tweaks: 连接 PowerProfiles 失败');
@@ -609,12 +614,15 @@ export default class QuickPanelTweaksExtension extends Extension {
         }
         const profiles = (proxy.get_cached_property('Profiles')?.deep_unpack() ?? [])
             .map(p => p.Profile?.deep_unpack?.() ?? p.Profile);
-        const active = proxy.get_cached_property('ActiveProfile')?.deep_unpack();
         if (!profiles.length) {
             this._activatePanel('gnome-power-panel.desktop');
             return;
         }
-        const next = profiles[(Math.max(profiles.indexOf(active), -1) + 1) % profiles.length];
+        // 连点时缓存属性会滞后一拍，所以以上一次“我刚设过的目标”为基准推进
+        const cached = proxy.get_cached_property('ActiveProfile')?.deep_unpack();
+        const current = this._pendingProfile ?? cached;
+        const next = profiles[(Math.max(profiles.indexOf(current), -1) + 1) % profiles.length];
+        this._pendingProfile = next;
         // Gio.DBusProxy.call 的签名是 (method, params, flags, timeout, cancellable, callback) 6 个参数，
         // 方法名要写成 "接口.方法" 的点号形式
         proxy.call('org.freedesktop.DBus.Properties.Set',
@@ -625,6 +633,7 @@ export default class QuickPanelTweaksExtension extends Extension {
                     p.call_finish(res);
                     Main.notify('电源模式', `已切换到「${PROFILE_LABELS[next] ?? next}」`);
                 } catch (e) {
+                    this._pendingProfile = null;
                     logError(e, 'quick-panel-tweaks: 切换电源模式失败');
                     Main.notify('电源模式', '切换失败，可右键打开电源设置');
                 }
