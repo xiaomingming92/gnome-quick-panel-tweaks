@@ -43,6 +43,7 @@ const POOL = [
     ['apps', 'VS Code', 'vscode'],
 ];
 
+const GLYPH_COLOR = '#f2f2f5';   // 符号图标颜色（想用系统主色改成比如 '#e95420' 或 '#3584e4'）
 const SHELL_ICONS = ['record-screen-symbolic', 'screenshooter-symbolic'];
 // 有些 App 的图标不在图标主题里（直接放在自己的安装目录）
 const EXTRA_ICONS = {
@@ -72,20 +73,26 @@ function findIcon(name) {
     return null;
 }
 
-function inlineSvg(file) {
+// 内联符号图标：
+//  1) 沿用原文件的 viewBox（主题图标多是 16×16，写死 24 会缩在左上角、看着不居中）
+//  2) 把显式的 fill/stroke 全改写成 currentColor —— 不管是 fill 型、stroke 型
+//     还是 <use>/<symbol> 型，最后都是同一个颜色，不会出现有的深有的浅
+function inlineGlyph(file, color) {
     const xml = fs.readFileSync(file, 'utf8')
         .replace(/<\?xml[^>]*\?>/g, '')
         .replace(/<!DOCTYPE[^>]*>/g, '');
     const tag = xml.match(/<svg[^>]*>/i)?.[0] ?? '';
-    // 关键：沿用原文件的 viewBox（主题图标大多是 16×16，写死 24 会让图形缩在左上角）
     const box = tag.match(/viewBox="([^"]+)"/i)?.[1]
         ?? (() => {
             const w = tag.match(/width="([\d.]+)/i)?.[1];
             const h = tag.match(/height="([\d.]+)/i)?.[1];
             return w && h ? `0 0 ${w} ${h}` : '0 0 16 16';
         })();
-    const inner = xml.replace(/^[\s\S]*?<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '');
-    return {box, inner};
+    const inner = xml
+        .replace(/^[\s\S]*?<svg[^>]*>/i, '')
+        .replace(/<\/svg>\s*$/i, '')
+        .replace(/\s(fill|stroke)="(?!none")[^"]*"/g, ' $1="currentColor"');
+    return `<svg viewBox="${box}" width="18" height="18" style="color:${color};display:block">${inner}</svg>`;
 }
 
 const groups = {'system': '系统 / 会话', 'settings': '设置入口', 'toggles': '一键开关', 'apps': '常用应用'};
@@ -101,10 +108,9 @@ for (const [group, label, icon] of POOL) {
     const file = findIcon(icon);
     const isApp = group === 'apps';
     // 彩色应用图标直接引用原文件（内联会丢 defs/渐变），符号图标内联后统一染色并居中
-    const art = !file ? '<svg viewBox="0 0 16 16"></svg>'
-        : file.endsWith('.svg') && !isApp
-            ? (() => { const {box, inner} = inlineSvg(file); return `<svg viewBox="${box}">${inner}</svg>`; })()
-            : `<img src="file://${file}">`;
+    const art = !file ? ''
+        : isApp ? `<img src="file://${file}">`
+        : inlineGlyph(file, GLYPH_COLOR);
     cards += `<div class="card"><div class="icon${isApp ? ' app' : ''}">${art}</div>` +
         `<div class="text"><div class="label">${label}</div><div class="id">${icon}</div></div></div>`;
 }
@@ -127,13 +133,9 @@ h2 { font-size:15px; color:#c8c8d0; margin:22px 0 10px; font-weight:600; }
   flex:0 0 36px; width:36px; height:36px; border-radius:50%; background:#3a3a40;
   display:flex; align-items:center; justify-content:center;
 }
-.icon svg { width:17px; height:17px; display:block; }
-/* 只改填充色；带 stroke 的图形才改描边，且不要给 stroke="none" 的图形硬描边 */
-.icon:not(.app) svg { color:#f2f2f5; }
-.icon:not(.app) svg * { fill:currentColor !important; }
-.icon:not(.app) svg [stroke]:not([stroke="none"]) { stroke:currentColor !important; }
+/* 符号图标统一颜色：想换成系统主色就改 GLYPH_COLOR 常量（脚本顶部） */
 .icon.app { background:#f3f3f5; }
-.icon.app img { width:24px; height:24px; display:block; }
+.icon.app img { width:20px; height:20px; display:block; }
 .text { min-width:0; display:flex; flex-direction:column; justify-content:center; gap:3px; }
 .label { font-size:13.5px; line-height:1.1; }
 .id { font-size:9.5px; color:#8b8b93; font-family:ui-monospace, monospace; line-height:1.25; word-break:break-all; }
