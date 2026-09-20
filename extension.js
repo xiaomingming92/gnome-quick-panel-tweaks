@@ -40,6 +40,8 @@ function place(parent, child, index) {
 
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
+        // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
+        console.log('quick-panel-tweaks: loaded build 2026-09-21a');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -195,12 +197,6 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._builtinButtons.forEach((btn, i) => {
             btn.visible = wanted.includes(BUILTIN_IDS[i]);
         });
-        // 统一接管这一行所有按钮的按下/松开：短按 = 原动作，长按 = 进编辑态
-        this._attachPress(this._powerToggle, 'power');
-        this._builtinButtons.forEach((btn, i) => this._attachPress(btn, BUILTIN_IDS[i]));
-        for (const [id, btn] of this._dynamic)
-            this._attachPress(btn, id);
-
         if (!this._boxMotionId) {
             this._boxMotionId = box.connect('motion-event', (_a, ev) => this._onMotion(ev));
             this._qsMenuClosedId = Main.panel.statusArea.quickSettings.menu.connect(
@@ -233,6 +229,13 @@ export default class QuickPanelTweaksExtension extends Extension {
             if (!btn.visible)
                 place(box, btn, index++);
         }
+
+        // 统一接管这一行所有按钮的按下/松开：短按 = 原动作，长按 = 进编辑态。
+        // 必须放在“创建完动态按钮（录屏/自定义）”之后 —— 否则新按钮收不到点击。
+        this._attachPress(this._powerToggle, 'power');
+        this._builtinButtons.forEach((btn, i) => this._attachPress(btn, BUILTIN_IDS[i]));
+        for (const [id, btn] of this._dynamic)
+            this._attachPress(btn, id);
         return true;
     }
 
