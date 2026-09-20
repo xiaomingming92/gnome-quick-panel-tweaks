@@ -46,6 +46,14 @@
     color: #e95420;
 }
 
+/* 电池右边的当前档位小字 */
+.quick-tweaks-row .quick-tweaks-profile {
+    font-size: 0.85em;
+    color: #c9c9d1;
+    margin-left: -6px;      /* 贴紧电池按钮，别把 5 个图标挤出这一行 */
+    margin-right: 2px;
+}
+
 /* 想让系统栏里的图标也用系统主色？取消下面这段注释即可
    （-st-accent-color 跟随主题主色；也可直接写死 hex，例如 Ubuntu 橙 #e95420、GNOME 蓝 #3584e4）
 

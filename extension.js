@@ -41,7 +41,7 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21b');
+        console.log('quick-panel-tweaks: loaded build 2026-09-21c');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -49,6 +49,7 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._editButtons = [];
         this._screencastNotifyId = 0;
         this._pendingProfile = null;   // 连点切档时的“乐观值”，避免读缓存滞后一拍
+        this._profileLabel = null;     // 行内显示当前档位的小字
         this._press = null;
         this._longPressId = 0;
         this._drag = null;
@@ -153,6 +154,7 @@ export default class QuickPanelTweaksExtension extends Extension {
             // 属性真的变了就把乐观值清掉，之后以缓存为准
             this._powerProfiles.connect('g-properties-changed', () => {
                 this._pendingProfile = null;
+                this._syncProfileLabel();
             });
         } catch (e) {
             this._powerProfiles = null;
@@ -215,6 +217,17 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         let index = 0;
         place(box, this._powerToggle, index++);
+        // 电池右边跟一个小字显示当前性能档位（不靠通知，避开 Ubuntu 通知横幅层叠的问题）
+        if (this._config.batteryClick === 'cycle') {
+            this._profileLabel = this._profileLabel ??
+                new St.Label({style_class: 'quick-tweaks-profile', text: '', y_align: Clutter.ActorAlign.CENTER});
+            if (this._profileLabel.get_parent() !== box)
+                box.add_child(this._profileLabel);
+            place(box, this._profileLabel, index++);
+            this._syncProfileLabel();
+        } else if (this._profileLabel?.get_parent() === box) {
+            box.remove_child(this._profileLabel);
+        }
         this._flex = this._flex ?? new Clutter.Actor({x_expand: true});
         if (this._flex.get_parent() !== box)
             box.add_child(this._flex);
@@ -623,6 +636,7 @@ export default class QuickPanelTweaksExtension extends Extension {
         const current = this._pendingProfile ?? cached;
         const next = profiles[(Math.max(profiles.indexOf(current), -1) + 1) % profiles.length];
         this._pendingProfile = next;
+        this._syncProfileLabel(next);      // 先就地更新小字，体感即时
         // Gio.DBusProxy.call 的签名是 (method, params, flags, timeout, cancellable, callback) 6 个参数，
         // 方法名要写成 "接口.方法" 的点号形式
         proxy.call('org.freedesktop.DBus.Properties.Set',
@@ -631,13 +645,27 @@ export default class QuickPanelTweaksExtension extends Extension {
             (p, res) => {
                 try {
                     p.call_finish(res);
-                    Main.notify('电源模式', `已切换到「${PROFILE_LABELS[next] ?? next}」`);
                 } catch (e) {
                     this._pendingProfile = null;
                     logError(e, 'quick-panel-tweaks: 切换电源模式失败');
                     Main.notify('电源模式', '切换失败，可右键打开电源设置');
                 }
             });
+    }
+
+    // 行内小字：显示当前性能档位（性能 / 平衡 / 节能）
+    _syncProfileLabel(explicit) {
+        if (!this._profileLabel)
+            return;
+        const proxy = this._powerProfiles;
+        const current = explicit ??
+            this._pendingProfile ??
+            proxy?.get_cached_property('ActiveProfile')?.deep_unpack();
+        if (!current) {
+            this._profileLabel.text = '';
+            return;
+        }
+        this._profileLabel.text = PROFILE_LABELS[current] ?? current;
     }
 
     // ---------- 录屏 ----------
