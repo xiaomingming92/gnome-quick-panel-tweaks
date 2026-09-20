@@ -55,8 +55,13 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._recording = false;
         this._pressId = 0;
 
-        this._screencast = new ScreencastProxy(
-            Gio.DBus.session, 'org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast');
+        try {
+            this._screencast = new ScreencastProxy(
+                Gio.DBus.session, 'org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast');
+        } catch (e) {
+            this._screencast = null;
+            logError(e, 'quick-panel-tweaks: 连接录屏服务失败');
+        }
         try {
             this._powerProfiles = Gio.DBusProxy.new_for_bus_sync(
                 Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, null,
@@ -66,10 +71,15 @@ export default class QuickPanelTweaksExtension extends Extension {
             logError(e, 'quick-panel-tweaks: 连接 PowerProfiles 失败');
         }
 
-        this._theme = St.ThemeContext.get_for_stage(global.stage).get_theme();
-        this._stylesheet = Gio.File.new_for_path(
-            GLib.build_filenamev([this.path, 'stylesheet.css']));
-        this._theme.load_stylesheet(this._stylesheet);
+        try {
+            this._theme = St.ThemeContext.get_for_stage(global.stage).get_theme();
+            this._stylesheet = Gio.File.new_for_path(
+                GLib.build_filenamev([this.path, 'stylesheet.css']));
+            this._theme.load_stylesheet(this._stylesheet);
+        } catch (e) {
+            this._theme = null;
+            logError(e, 'quick-panel-tweaks: 加载样式失败');
+        }
 
         // 面板是异步搭起来的：轮询到系统栏就绪后应用一次
         this._timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
@@ -81,11 +91,16 @@ export default class QuickPanelTweaksExtension extends Extension {
         });
 
         // 设置窗口改完配置即时生效
-        this._watch = watchConfig(() => {
-            this._config = loadConfig();
-            this._resetDynamic();
-            this._apply();
-        });
+        try {
+            this._watch = watchConfig(() => {
+                this._config = loadConfig();
+                this._resetDynamic();
+                this._apply();
+            });
+        } catch (e) {
+            this._watch = null;
+            logError(e, 'quick-panel-tweaks: 监听配置文件失败');
+        }
     }
 
     disable() {
@@ -386,6 +401,10 @@ export default class QuickPanelTweaksExtension extends Extension {
 
     // ---------- 录屏 ----------
     _toggleRecording() {
+        if (!this._screencast) {
+            Main.notify('录屏不可用', 'org.gnome.Shell.Screencast 没有连上');
+            return;
+        }
         if (this._recording) {
             this._screencast.StopScreencastRemote((_result, error) => {
                 if (error) {
