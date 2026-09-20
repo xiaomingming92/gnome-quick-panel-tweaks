@@ -43,7 +43,7 @@ const POOL = [
     ['apps', 'VS Code', 'vscode'],
 ];
 
-const GLYPH_COLOR = '#f2f2f5';   // 符号图标颜色（想用系统主色改成比如 '#e95420' 或 '#3584e4'）
+const GLYPH_COLOR = '#e95420';   // 符号图标颜色：Ubuntu 主色（GNOME palette orange 为 '#ed5b00'）
 const SHELL_ICONS = ['record-screen-symbolic', 'screenshooter-symbolic'];
 // 有些 App 的图标不在图标主题里（直接放在自己的安装目录）
 const EXTRA_ICONS = {
