@@ -55,21 +55,11 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._recording = false;
         this._pressId = 0;
 
-        try {
-            this._screencast = new ScreencastProxy(
-                Gio.DBus.session, 'org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast');
-        } catch (e) {
-            this._screencast = null;
-            logError(e, 'quick-panel-tweaks: 连接录屏服务失败');
-        }
-        try {
-            this._powerProfiles = Gio.DBusProxy.new_for_bus_sync(
-                Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, null,
-                POWER_PROFILES, POWER_PROFILES_PATH, POWER_PROFILES, null);
-        } catch (e) {
-            this._powerProfiles = null;
-            logError(e, 'quick-panel-tweaks: 连接 PowerProfiles 失败');
-        }
+        // 录屏代理延迟到第一次点按钮时再建：同步建会卡住 Shell 主循环（StartServiceByName 超时）
+        this._screencast = null;
+        this._screencastPending = false;
+        // 同理延迟创建：enable() 阶段只做零成本的事，D-Bus 代理等用户第一次点再建
+        this._powerProfiles = null;
 
         try {
             this._theme = St.ThemeContext.get_for_stage(global.stage).get_theme();
@@ -150,6 +140,42 @@ export default class QuickPanelTweaksExtension extends Extension {
             btn.destroy();
         this._dynamic.clear();
         this._recordButton = null;
+    }
+
+    _ensureScreencast() {
+        if (this._screencast || this._screencastPending)
+            return this._screencast;
+        this._screencastPending = true;
+        try {
+            this._screencast = new ScreencastProxy(
+                Gio.DBus.session, 'org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast',
+                (_proxy, error) => {
+                    this._screencastPending = false;
+                    if (error) {
+                        this._screencast = null;
+                        logError(error, 'quick-panel-tweaks: 连接录屏服务失败');
+                    }
+                });
+        } catch (e) {
+            this._screencastPending = false;
+            this._screencast = null;
+            logError(e, 'quick-panel-tweaks: 创建录屏代理失败');
+        }
+        return this._screencast;
+    }
+
+    _ensurePowerProfiles() {
+        if (this._powerProfiles)
+            return this._powerProfiles;
+        try {
+            this._powerProfiles = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SYSTEM, Gio.DBusProxyFlags.DO_NOT_AUTO_START, null,
+                POWER_PROFILES, POWER_PROFILES_PATH, POWER_PROFILES, null);
+        } catch (e) {
+            this._powerProfiles = null;
+            logError(e, 'quick-panel-tweaks: 连接 PowerProfiles 失败');
+        }
+        return this._powerProfiles;
     }
 
     // ---------- 布局 ----------
@@ -380,7 +406,7 @@ export default class QuickPanelTweaksExtension extends Extension {
 
     // ---------- 电池：循环性能档位 ----------
     _cyclePowerProfile() {
-        const proxy = this._powerProfiles;
+        const proxy = this._ensurePowerProfiles();
         if (!proxy) {
             this._activatePanel('gnome-power-panel.desktop');
             return;
@@ -401,12 +427,13 @@ export default class QuickPanelTweaksExtension extends Extension {
 
     // ---------- 录屏 ----------
     _toggleRecording() {
-        if (!this._screencast) {
+        const screencast = this._ensureScreencast();
+        if (!screencast) {
             Main.notify('录屏不可用', 'org.gnome.Shell.Screencast 没有连上');
             return;
         }
         if (this._recording) {
-            this._screencast.StopScreencastRemote((_result, error) => {
+            screencast.StopScreencastRemote((_result, error) => {
                 if (error) {
                     logError(error, 'quick-panel-tweaks: 停止录屏失败');
                     return;
@@ -418,7 +445,7 @@ export default class QuickPanelTweaksExtension extends Extension {
             });
             return;
         }
-        this._screencast.ScreencastRemote(
+        screencast.ScreencastRemote(
             'Screencasts/录屏 %d %t',
             {'draw-cursor': new GLib.Variant('b', true), 'framerate': new GLib.Variant('i', 30)},
             (result, error) => {

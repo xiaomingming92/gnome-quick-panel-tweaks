@@ -18,13 +18,15 @@ export const DEFAULT_CONFIG = {
 };
 
 function readJson(path) {
+    if (!GLib.file_test(path, GLib.FileTest.EXISTS))
+        return null;               // 还没配置过：安静地返回默认值，不要刷日志
     try {
         const [ok, bytes] = GLib.file_get_contents(path);
         if (!ok)
             return null;
         return JSON.parse(new TextDecoder().decode(bytes));
     } catch (e) {
-        logError(e, `quick-panel-tweaks: 读取失败 ${path}`);
+        console.warn(`quick-panel-tweaks: 配置读取失败 ${path}: ${e.message}`);
         return null;
     }
 }
