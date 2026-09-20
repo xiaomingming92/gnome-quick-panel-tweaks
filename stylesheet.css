@@ -1,0 +1,29 @@
+/* 系统栏（快捷面板最下面那行）：收紧圆图标，让右侧放得下 5 个 */
+.quick-tweaks-row .icon-button {
+    padding: 0.62em;
+    min-height: 1.0em;
+    min-width: 1.0em;
+}
+.quick-tweaks-row .icon-button StIcon {
+    icon-size: 1.05em;
+}
+
+/* 左侧电池按钮（较长那个） */
+.quick-tweaks-row .power-item {
+    padding-left: 0.8em;
+    padding-right: 0.85em;
+}
+
+/* 录屏中：红底 + 停止图标 */
+.quick-tweaks-row .icon-button.recording {
+    background-color: #e01b24;
+    color: #ffffff;
+}
+.quick-tweaks-row .icon-button.recording:hover {
+    background-color: #ff4b56;
+}
+
+/* 自定义按钮被禁用时 */
+.quick-tweaks-row .icon-button.custom-item {
+    color: inherit;
+}
