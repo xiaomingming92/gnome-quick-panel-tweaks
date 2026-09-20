@@ -15,21 +15,7 @@ import * as SystemActions from 'resource:///org/gnome/shell/misc/systemActions.j
 import {loadConfig, saveConfig, watchConfig} from './config.js';
 import {poolById} from './pool.js';
 
-const SCREENCAST_XML = `<node>
-<interface name="org.gnome.Shell.Screencast">
-  <method name="Screencast">
-    <arg type="s" direction="in" name="file_template"/>
-    <arg type="a{sv}" direction="in" name="options"/>
-    <arg type="b" direction="out" name="success"/>
-    <arg type="s" direction="out" name="filename_used"/>
-  </method>
-  <method name="StopScreencast">
-    <arg type="b" direction="out" name="success"/>
-  </method>
-</interface>
-</node>`;
-const ScreencastProxy = Gio.DBusProxy.makeProxyWrapper(SCREENCAST_XML);
-
+const UIMODE_SCREENCAST = 1;    // gnome-shell 的 UIMode.SCREENCAST（模块内部常量，未导出）
 const POWER_PROFILES = 'org.freedesktop.UPower.PowerProfiles';
 const POWER_PROFILES_PATH = '/org/freedesktop/UPower/PowerProfiles';
 const PROFILE_LABELS = {performance: '性能', balanced: '平衡', 'power-saver': '节能'};
@@ -56,16 +42,13 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
-        this._recordBusy = false;      // 上一次 开始/停止 调用还没回来时，忽略新的点击
         this._editMode = false;
         this._editButtons = [];
+        this._screencastNotifyId = 0;
         this._press = null;
         this._longPressId = 0;
         this._drag = null;
 
-        // 录屏代理延迟到第一次点按钮时再建：同步建会卡住 Shell 主循环（StartServiceByName 超时）
-        this._screencast = null;
-        this._screencastPending = false;
         // 同理延迟创建：enable() 阶段只做零成本的事，D-Bus 代理等用户第一次点再建
         this._powerProfiles = null;
 
@@ -116,6 +99,10 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         if (this._box)
             this._box.remove_style_class_name('quick-tweaks-row');
+        if (this._screencastNotifyId && Main.screenshotUI) {
+            Main.screenshotUI.disconnect(this._screencastNotifyId);
+            this._screencastNotifyId = 0;
+        }
         if (this._flex?.get_parent())
             this._flex.get_parent().remove_child(this._flex);
         this._flex = null;
@@ -141,7 +128,6 @@ export default class QuickPanelTweaksExtension extends Extension {
             /* 忽略 */
         }
 
-        this._screencast = null;
         this._powerProfiles = null;
     }
 
@@ -151,28 +137,6 @@ export default class QuickPanelTweaksExtension extends Extension {
             btn.destroy();
         this._dynamic.clear();
         this._recordButton = null;
-    }
-
-    _ensureScreencast() {
-        if (this._screencast || this._screencastPending)
-            return this._screencast;
-        this._screencastPending = true;
-        try {
-            this._screencast = new ScreencastProxy(
-                Gio.DBus.session, 'org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast',
-                (_proxy, error) => {
-                    this._screencastPending = false;
-                    if (error) {
-                        this._screencast = null;
-                        logError(error, 'quick-panel-tweaks: 连接录屏服务失败');
-                    }
-                });
-        } catch (e) {
-            this._screencastPending = false;
-            this._screencast = null;
-            logError(e, 'quick-panel-tweaks: 创建录屏代理失败');
-        }
-        return this._screencast;
     }
 
     _ensurePowerProfiles() {
@@ -244,6 +208,8 @@ export default class QuickPanelTweaksExtension extends Extension {
                     this._exitEditMode();
                 });
         }
+        // 录屏按钮状态跟随 shell（顶栏指示器/系统 UI 起录也会同步）
+        this._bindRecordingState();
 
         let index = 0;
         place(box, this._powerToggle, index++);
@@ -651,51 +617,50 @@ export default class QuickPanelTweaksExtension extends Extension {
 
     // ---------- 录屏 ----------
     _toggleRecording() {
-        if (this._recordBusy) {
-            console.log('quick-panel-tweaks: 上一次录屏调用还没返回，忽略这次点击');
+        const ui = Main.screenshotUI;
+        if (!ui) {
+            Main.notify('录屏不可用', '系统截图/录屏 UI 不可用');
             return;
         }
-        const screencast = this._ensureScreencast();
-        if (!screencast) {
-            Main.notify('录屏不可用', 'org.gnome.Shell.Screencast 没有连上');
-            return;
-        }
-        if (this._recording) {
-            this._recordBusy = true;
-            screencast.StopScreencastRemote((result, error) => {
-                this._recordBusy = false;
-                const ok = !error && result?.[0] !== false;
-                this._setRecordingUI(false);
-                if (ok)
-                    Main.notify('录屏', '已结束，文件在「视频 / Screencasts」');
-                else
-                    Main.notify('录屏', '停止失败（录制可能已中断），状态已复位，可重新开始');
+        // 以 shell 自己的状态为准：这样顶栏的录制指示器、停止按钮、快门 UI 全都会联动
+        if (ui.screencastInProgress) {
+            ui.stopScreencast().catch(e => {
+                logError(e, 'quick-panel-tweaks: 停止录屏失败');
+                Main.notify('录屏', '停止失败，可点顶栏的录制指示器结束');
             });
             return;
         }
-        screencast.ScreencastRemote(
-            'Screencasts/录屏 %d %t',
-            {'draw-cursor': new GLib.Variant('b', true), 'framerate': new GLib.Variant('i', 30)},
-            (result, error) => {
-                this._recordBusy = false;
-                if (error) {
-                    // 服务里残留「正在录制」状态：先复位，UI 一起复位
-                    if (`${error.message}`.includes('AlreadyRecording')) {
-                        screencast.StopScreencastRemote(() => {
-                            this._setRecordingUI(false);
-                            Main.notify('录屏', '检测到上次录制残留状态，已复位 —— 请再点一次开始');
-                        });
-                        return;
-                    }
-                    logError(error, 'quick-panel-tweaks: 开始录屏失败');
-                    Main.notify('录屏失败', error.message ?? String(error));
-                    this._setRecordingUI(false);
-                    return;
-                }
-                this._setRecordingUI(true);
-                const file = result?.[1] ? GLib.path_get_basename(result[1]) : '';
-                Main.notify('开始录屏', file ? `正在录制：${file}` : '正在录制屏幕');
-            });
+        this._startScreencastViaShell(ui);
+    }
+
+    async _startScreencastViaShell(ui) {
+        if (typeof ui._startScreencast !== 'function') {
+            Main.notify('录屏失败', '当前 GNOME 版本的录屏接口与扩展不匹配');
+            return;
+        }
+        try {
+            // 直接走 shell 的“整屏录制”入口：它会自己收起 UI、点亮顶栏指示器
+            await ui._startScreencast();
+        } catch (e) {
+            // 少数版本要求先进入录屏模式
+            try {
+                await ui.open(UIMODE_SCREENCAST);
+                await ui._startScreencast();
+            } catch (e2) {
+                logError(e2, 'quick-panel-tweaks: 开始录屏失败');
+                Main.notify('录屏失败', `${e2.message ?? e2}`);
+            }
+        }
+    }
+
+    // 让按钮状态始终跟随 shell（含从系统 UI 发起的录制）
+    _bindRecordingState() {
+        const ui = Main.screenshotUI;
+        if (!ui || this._screencastNotifyId)
+            return;
+        this._setRecordingUI(ui.screencastInProgress);
+        this._screencastNotifyId = ui.connect('notify::screencast-in-progress',
+            () => this._setRecordingUI(ui.screencastInProgress));
     }
 
     _setRecordingUI(on) {
