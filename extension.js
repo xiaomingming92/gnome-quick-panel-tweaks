@@ -56,6 +56,7 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
+        this._recordBusy = false;      // 上一次 开始/停止 调用还没回来时，忽略新的点击
         this._editMode = false;
         this._editButtons = [];
         this._press = null;
@@ -426,6 +427,11 @@ export default class QuickPanelTweaksExtension extends Extension {
     }
 
     _dispatchClick(btn) {
+        // 带菜单的按钮（如“关机”按钮有 待机/重启/关机… 菜单）保持原有交互：开菜单
+        if (btn.menu?.open) {
+            btn.menu.open();
+            return;
+        }
         if (typeof btn._qptOnClick === 'function') {
             btn._qptOnClick();
             return;
@@ -642,13 +648,19 @@ export default class QuickPanelTweaksExtension extends Extension {
 
     // ---------- 录屏 ----------
     _toggleRecording() {
+        if (this._recordBusy) {
+            console.log('quick-panel-tweaks: 上一次录屏调用还没返回，忽略这次点击');
+            return;
+        }
         const screencast = this._ensureScreencast();
         if (!screencast) {
             Main.notify('录屏不可用', 'org.gnome.Shell.Screencast 没有连上');
             return;
         }
         if (this._recording) {
+            this._recordBusy = true;
             screencast.StopScreencastRemote((result, error) => {
+                this._recordBusy = false;
                 const ok = !error && result?.[0] !== false;
                 this._setRecordingUI(false);
                 if (ok)
@@ -662,6 +674,7 @@ export default class QuickPanelTweaksExtension extends Extension {
             'Screencasts/录屏 %d %t',
             {'draw-cursor': new GLib.Variant('b', true), 'framerate': new GLib.Variant('i', 30)},
             (result, error) => {
+                this._recordBusy = false;
                 if (error) {
                     // 服务里残留「正在录制」状态：先复位，UI 一起复位
                     if (`${error.message}`.includes('AlreadyRecording')) {
