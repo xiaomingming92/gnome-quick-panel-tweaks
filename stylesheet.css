@@ -28,6 +28,24 @@
     color: inherit;
 }
 
+/* ===== 长按编辑态 ===== */
+.quick-tweaks-row.editing {
+    border: 2px solid #e95420;      /* 想跟随主题可改成 -st-accent-color */
+    border-radius: 18px;
+    padding: 2px 6px;
+}
+.quick-tweaks-row .icon-button.dragging {
+    border: 2px dashed #e95420;
+    border-radius: 999px;
+}
+.quick-tweaks-row .icon-button.removing {
+    border: 2px solid #e01b24;
+    border-radius: 999px;
+}
+.quick-tweaks-row .edit-button {
+    color: #e95420;
+}
+
 /* 想让系统栏里的图标也用系统主色？取消下面这段注释即可
    （-st-accent-color 跟随主题主色；也可直接写死 hex，例如 Ubuntu 橙 #e95420、GNOME 蓝 #3584e4）
 

@@ -12,7 +12,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as SystemActions from 'resource:///org/gnome/shell/misc/systemActions.js';
 
-import {loadConfig, watchConfig} from './config.js';
+import {loadConfig, saveConfig, watchConfig} from './config.js';
 import {poolById} from './pool.js';
 
 const SCREENCAST_XML = `<node>
@@ -33,6 +33,9 @@ const ScreencastProxy = Gio.DBusProxy.makeProxyWrapper(SCREENCAST_XML);
 const POWER_PROFILES = 'org.freedesktop.UPower.PowerProfiles';
 const POWER_PROFILES_PATH = '/org/freedesktop/UPower/PowerProfiles';
 const PROFILE_LABELS = {performance: '性能', balanced: '平衡', 'power-saver': '节能'};
+const LONG_PRESS_MS = 500;      // 长按多久进入编辑态
+const DRAG_THRESHOLD = 8;       // 编辑态里移动多少像素算开始拖动
+const REMOVE_OFFSET = 44;       // 拖到该行上方这么多像素 = 移除
 
 // shell 自带的 4 个按钮在系统栏里的顺序（截图/设置/锁屏/关机）
 const BUILTIN_IDS = ['screenshot', 'settings', 'lock', 'shutdown'];
@@ -53,7 +56,11 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
-        this._pressId = 0;
+        this._editMode = false;
+        this._editButtons = [];
+        this._press = null;
+        this._longPressId = 0;
+        this._drag = null;
 
         // 录屏代理延迟到第一次点按钮时再建：同步建会卡住 Shell 主循环（StartServiceByName 超时）
         this._screencast = null;
@@ -94,6 +101,7 @@ export default class QuickPanelTweaksExtension extends Extension {
     }
 
     disable() {
+        this._exitEditMode();
         if (this._timerId) {
             GLib.source_remove(this._timerId);
             this._timerId = 0;
@@ -111,10 +119,11 @@ export default class QuickPanelTweaksExtension extends Extension {
             this._flex.get_parent().remove_child(this._flex);
         this._flex = null;
 
-        if (this._powerToggle && this._pressId) {
-            this._powerToggle.disconnect(this._pressId);
-            this._pressId = 0;
+        if (this._longPressId) {
+            GLib.source_remove(this._longPressId);
+            this._longPressId = 0;
         }
+        this._press = null;
         this._powerToggle = null;
 
         for (const btn of this._builtinButtons ?? [])
@@ -136,6 +145,7 @@ export default class QuickPanelTweaksExtension extends Extension {
     }
 
     _resetDynamic() {
+        this._exitEditMode();
         for (const btn of this._dynamic.values())
             btn.destroy();
         this._dynamic.clear();
@@ -215,25 +225,21 @@ export default class QuickPanelTweaksExtension extends Extension {
         for (const spacer of spacers)
             spacer.x_expand = false;
 
-        if (!this._pressId) {
-            this._pressId = this._powerToggle.connect('button-press-event', (_actor, event) => {
-                const button = event.get_button();
-                if (button === 1 && this._config.batteryClick === 'cycle') {
-                    this._cyclePowerProfile();
-                    return Clutter.EVENT_STOP;
-                }
-                if (button === 3) {
-                    this._activatePanel('gnome-power-panel.desktop');
-                    return Clutter.EVENT_STOP;
-                }
-                return Clutter.EVENT_PROPAGATE;
-            });
-        }
-
         const wanted = this._config.rightIcons.slice(0, this._config.maxRight);
         this._builtinButtons.forEach((btn, i) => {
             btn.visible = wanted.includes(BUILTIN_IDS[i]);
         });
+        // 统一接管这一行所有按钮的按下/松开：短按 = 原动作，长按 = 进编辑态
+        this._attachPress(this._powerToggle, 'power');
+        this._builtinButtons.forEach((btn, i) => this._attachPress(btn, BUILTIN_IDS[i]));
+        for (const [id, btn] of this._dynamic)
+            this._attachPress(btn, id);
+
+        if (!this._boxMotionId) {
+            this._boxMotionId = box.connect('motion-event', (_a, ev) => this._onMotion(ev));
+            this._qsMenuClosedId = Main.panel.statusArea.quickSettings.menu.connect(
+                'menu-closed', () => this._exitEditMode());
+        }
 
         let index = 0;
         place(box, this._powerToggle, index++);
@@ -257,6 +263,208 @@ export default class QuickPanelTweaksExtension extends Extension {
                 place(box, btn, index++);
         }
         return true;
+    }
+
+    // ---------- 长按 / 编辑态 / 拖动排序 ----------
+    _attachPress(btn, id) {
+        if (btn._qptAttached)
+            return;
+        btn._qptAttached = true;
+        btn._qptId = id;
+        btn.connect('button-press-event', (_a, ev) => this._onPress(btn, ev));
+        btn.connect('button-release-event', (_a, ev) => this._onRelease(btn, ev));
+    }
+
+    _onPress(btn, ev) {
+        const mouseButton = ev.get_button();
+        if (mouseButton === 3) {
+            if (btn === this._powerToggle) {
+                this._activatePanel('gnome-power-panel.desktop');
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }
+        if (mouseButton !== 1)
+            return Clutter.EVENT_PROPAGATE;
+
+        const [x, y] = ev.get_coords();
+        this._press = {btn, x, y, longFired: false};
+        if (this._longPressId)
+            GLib.source_remove(this._longPressId);
+        this._longPressId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LONG_PRESS_MS, () => {
+            this._longPressId = 0;
+            if (this._press?.btn !== btn)
+                return GLib.SOURCE_REMOVE;
+            this._press.longFired = true;
+            if (!this._editMode)
+                this._enterEditMode();
+            else if (btn !== this._powerToggle)
+                this._drag = {actor: btn, x0: x, y0: y, active: false, remove: false};
+            return GLib.SOURCE_REMOVE;
+        });
+        btn.add_style_pseudo_class?.('active');
+        return Clutter.EVENT_STOP;   // 自己处理点击，避免 shell 的 clicked 抢先触发
+    }
+
+    _onRelease(btn, ev) {
+        if (this._longPressId) {
+            GLib.source_remove(this._longPressId);
+            this._longPressId = 0;
+        }
+        btn.remove_style_pseudo_class?.('active');
+        const press = this._press;
+        this._press = null;
+        if (this._drag) {
+            this._endDrag();
+            return Clutter.EVENT_STOP;
+        }
+        if (press?.longFired || this._editMode)
+            return Clutter.EVENT_STOP;   // 长按松手 / 编辑态里的单击都不触发动作
+        this._dispatchClick(btn);
+        return Clutter.EVENT_STOP;
+    }
+
+    _onMotion(ev) {
+        const drag = this._drag;
+        if (!drag)
+            return Clutter.EVENT_PROPAGATE;
+        const [x, y] = ev.get_coords();
+        if (!drag.active) {
+            if (Math.hypot(x - drag.x0, y - drag.y0) < DRAG_THRESHOLD)
+                return Clutter.EVENT_PROPAGATE;
+            drag.active = true;
+            drag.actor.add_style_class_name('dragging');
+        }
+        const box = this._box;
+        const [, by] = box.get_transformed_position();
+
+        const removing = y < by - REMOVE_OFFSET;
+        if (removing !== drag.remove) {
+            drag.remove = removing;
+            drag.actor[removing ? 'add_style_class_name' : 'remove_style_class_name']('removing');
+        }
+
+        // 实时排序：插到“最后一个中心点在指针左侧”的图标之后
+        const kids = box.get_children().filter(c => this._isRowIcon(c) && c !== drag.actor);
+        let target = 1;                  // 电池之后
+        for (const c of kids) {
+            const [cx] = c.get_transformed_position();
+            if (x > cx + c.width / 2)
+                target = box.get_children().indexOf(c) + 1;
+        }
+        const maxIndex = box.get_children().length - 1;
+        place(box, drag.actor, Math.max(1, Math.min(target, maxIndex)));
+        return Clutter.EVENT_STOP;
+    }
+
+    _endDrag() {
+        const drag = this._drag;
+        this._drag = null;
+        if (!drag)
+            return;
+        drag.actor.remove_style_class_name('dragging');
+        drag.actor.remove_style_class_name('removing');
+        if (!drag.active)
+            return;
+        if (drag.remove && drag.actor._qptId) {
+            this._removeFromRow(drag.actor._qptId);
+            return;
+        }
+        this._saveOrderFromRow();
+    }
+
+    _isRowIcon(actor) {
+        return actor instanceof St.Button &&
+            actor !== this._powerToggle &&
+            !actor.has_style_class_name('edit-button');
+    }
+
+    _enterEditMode() {
+        if (this._editMode || !this._box)
+            return;
+        this._editMode = true;
+        this._box.add_style_class_name('editing');
+        this._editButtons = [];
+
+        const add = this._makeEditButton('list-add-symbolic', '添加 / 移除图标');
+        const done = this._makeEditButton('object-select-symbolic', '完成');
+        add._qptOnClick = () => {
+            this.openPreferences();
+            this._exitEditMode();
+        };
+        done._qptOnClick = () => this._exitEditMode();
+        for (const btn of [add, done]) {
+            btn.add_style_class_name('edit-button');
+            this._box.add_child(btn);
+            this._attachPress(btn, btn === add ? 'edit-add' : 'edit-done');
+            this._editButtons.push(btn);
+        }
+    }
+
+    _exitEditMode() {
+        this._drag = null;
+        if (!this._editMode)
+            return;
+        this._editMode = false;
+        this._box?.remove_style_class_name('editing');
+        for (const btn of this._editButtons)
+            btn.destroy();
+        this._editButtons = [];
+        this._saveOrderFromRow();
+    }
+
+    _makeEditButton(iconName, tooltip) {
+        return new St.Button({
+            style_class: 'icon-button',
+            can_focus: true,
+            accessible_name: tooltip,
+            child: new St.Icon({icon_name: iconName, style_class: 'system-status-icon'}),
+        });
+    }
+
+    _dispatchClick(btn) {
+        if (typeof btn._qptOnClick === 'function') {
+            btn._qptOnClick();
+            return;
+        }
+        const id = btn._qptId;
+        if (!id)
+            return;
+        const custom = this._config.custom.find(c => c.id === id);
+        if (custom) {
+            this._runCommand(custom.command);
+            return;
+        }
+        if (id === 'power') {
+            if (this._config.batteryClick === 'panel')
+                this._activatePanel('gnome-power-panel.desktop');
+            else
+                this._cyclePowerProfile();
+            return;
+        }
+        this._runAction(id);
+    }
+
+    _saveOrderFromRow() {
+        if (!this._box)
+            return;
+        const ids = this._box.get_children()
+            .filter(c => this._isRowIcon(c) && c.visible && c._qptId)
+            .map(c => c._qptId);
+        const cfg = loadConfig();
+        if (JSON.stringify(cfg.rightIcons) === JSON.stringify(ids))
+            return;
+        cfg.rightIcons = ids;
+        this._config = cfg;
+        saveConfig(cfg);
+    }
+
+    _removeFromRow(id) {
+        const cfg = loadConfig();
+        cfg.rightIcons = cfg.rightIcons.filter(x => x !== id);
+        this._config = cfg;
+        saveConfig(cfg);
+        Main.notify('Quick Panel Tweaks', `已从系统栏移除「${poolById(id)?.label ?? id}」`);
     }
 
     _resolveIcon(id) {
