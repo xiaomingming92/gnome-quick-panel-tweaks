@@ -322,8 +322,11 @@ export default class QuickPanelTweaksExtension extends Extension {
             this._endDrag();
             return Clutter.EVENT_STOP;
         }
-        if (press?.longFired || this._editMode)
-            return Clutter.EVENT_STOP;   // 长按松手 / 编辑态里的单击都不触发动作
+        if (press?.longFired)
+            return Clutter.EVENT_STOP;   // 长按松手不触发原动作
+        // 编辑态里：图标单击不触发原动作（避免误触截图/关机），但编辑按钮（＋/✓）要正常派发
+        if (this._editMode && !this._editButtons.includes(btn))
+            return Clutter.EVENT_STOP;
         this._dispatchClick(btn);
         return Clutter.EVENT_STOP;
     }
