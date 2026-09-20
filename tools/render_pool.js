@@ -73,11 +73,19 @@ function findIcon(name) {
 }
 
 function inlineSvg(file) {
-    let xml = fs.readFileSync(file, 'utf8')
+    const xml = fs.readFileSync(file, 'utf8')
         .replace(/<\?xml[^>]*\?>/g, '')
         .replace(/<!DOCTYPE[^>]*>/g, '');
-    const inner = xml.replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
-    return inner;
+    const tag = xml.match(/<svg[^>]*>/i)?.[0] ?? '';
+    // 关键：沿用原文件的 viewBox（主题图标大多是 16×16，写死 24 会让图形缩在左上角）
+    const box = tag.match(/viewBox="([^"]+)"/i)?.[1]
+        ?? (() => {
+            const w = tag.match(/width="([\d.]+)/i)?.[1];
+            const h = tag.match(/height="([\d.]+)/i)?.[1];
+            return w && h ? `0 0 ${w} ${h}` : '0 0 16 16';
+        })();
+    const inner = xml.replace(/^[\s\S]*?<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '');
+    return {box, inner};
 }
 
 const groups = {'system': '系统 / 会话', 'settings': '设置入口', 'toggles': '一键开关', 'apps': '常用应用'};
@@ -92,21 +100,23 @@ for (const [group, label, icon] of POOL) {
     }
     const file = findIcon(icon);
     const isApp = group === 'apps';
-    // 彩色应用图标直接引用原文件（内联会丢 defs/渐变），符号图标内联后统一染色
-    const art = !file ? '<svg viewBox="0 0 24 24"></svg>'
-        : file.endsWith('.svg') && !isApp ? `<svg viewBox="0 0 24 24">${inlineSvg(file)}</svg>`
-        : `<img src="file://${file}">`;
+    // 彩色应用图标直接引用原文件（内联会丢 defs/渐变），符号图标内联后统一染色并居中
+    const art = !file ? '<svg viewBox="0 0 16 16"></svg>'
+        : file.endsWith('.svg') && !isApp
+            ? (() => { const {box, inner} = inlineSvg(file); return `<svg viewBox="${box}">${inner}</svg>`; })()
+            : `<img src="file://${file}">`;
     cards += `<div class="card"><div class="icon${isApp ? ' app' : ''}">${art}</div>` +
         `<div class="text"><div class="label">${label}</div><div class="id">${icon}</div></div></div>`;
 }
-cards += '</div>';
+if (lastGroup !== null)
+    cards += '</div>';
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 body { margin:0; background:#1c1c1e; color:#e8e8ea; font:14px "Noto Sans CJK SC", system-ui, sans-serif; padding:28px 32px; }
 h1 { font-size:22px; margin:4px 0 6px; }
 .sub { color:#9a9aa2; font-size:13px; margin-bottom:18px; }
 h2 { font-size:15px; color:#c8c8d0; margin:22px 0 10px; font-weight:600; }
-/* 卡片走 flex：固定宽高 + 垂直居中，行与行严格对齐 */
+/* 卡片走 flex：固定宽高 + 内容垂直居中，行与行严格对齐 */
 .grid { display:flex; flex-wrap:wrap; gap:12px; align-items:stretch; }
 .card {
   flex:0 0 250px; height:66px; box-sizing:border-box;
@@ -117,16 +127,16 @@ h2 { font-size:15px; color:#c8c8d0; margin:22px 0 10px; font-weight:600; }
   flex:0 0 36px; width:36px; height:36px; border-radius:50%; background:#3a3a40;
   display:flex; align-items:center; justify-content:center;
 }
-.icon svg { width:19px; height:19px; display:block; }
-.icon:not(.app) svg * { fill:#f2f2f5 !important; stroke:#f2f2f5 !important; }
+.icon svg { width:17px; height:17px; display:block; }
+/* 只改填充色；带 stroke 的图形才改描边，且不要给 stroke="none" 的图形硬描边 */
+.icon:not(.app) svg { color:#f2f2f5; }
+.icon:not(.app) svg * { fill:currentColor !important; }
+.icon:not(.app) svg [stroke]:not([stroke="none"]) { stroke:currentColor !important; }
 .icon.app { background:#f3f3f5; }
-.icon.app img { width:28px; height:28px; display:block; }
-.text { min-width:0; display:flex; flex-direction:column; justify-content:center; gap:2px; }
-.label { font-size:13.5px; line-height:1.15; }
-.id {
-  font-size:10px; color:#8b8b93; font-family:ui-monospace, monospace;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
+.icon.app img { width:24px; height:24px; display:block; }
+.text { min-width:0; display:flex; flex-direction:column; justify-content:center; gap:3px; }
+.label { font-size:13.5px; line-height:1.1; }
+.id { font-size:9.5px; color:#8b8b93; font-family:ui-monospace, monospace; line-height:1.25; word-break:break-all; }
 </style></head><body>
 <h1>Quick Panel Tweaks · 图标池</h1>
 <div class="sub">21 个内置图标，右侧最多显示 5 个（可在设置里排序 / 勾选），另外可添加任意自定义命令按钮</div>
