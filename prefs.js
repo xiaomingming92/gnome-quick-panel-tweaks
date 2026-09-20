@@ -178,7 +178,7 @@ export default class QuickPanelTweaksPrefs extends ExtensionPreferences {
     _buildBatteryGroup() {
         const group = new Adw.PreferencesGroup({
             title: '电池按钮（最左边那个）',
-            description: 'GNOME 默认点它会跳转到设置里的电源面板；这里可以改成直接切档。',
+            description: 'GNOME 默认点它会跳转到设置里的电源面板；这里可以改成直接切档（该按钮在系统行最左边）。',
         });
         this._groups.push(group);
 

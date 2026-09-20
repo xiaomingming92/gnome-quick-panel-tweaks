@@ -1,7 +1,7 @@
 {
   "uuid": "quick-panel-tweaks@xiaomingming92.github.io",
   "name": "Quick Panel Tweaks",
-  "description": "自定义快捷面板底部系统栏：电池按钮左键循环性能档位（右键打开电源设置），右侧圆图标可从图标池中挑 5 个并排序，支持新增自定义命令按钮。",
+  "description": "自定义快捷面板顶部系统栏：电池按钮左键循环性能档位（右键打开电源设置），右侧圆图标可从图标池中挑 5 个并排序，支持新增自定义命令按钮。",
   "shell-version": ["50"],
   "version": 1,
   "url": "https://github.com/xiaomingming92/gnome-quick-panel-tweaks"

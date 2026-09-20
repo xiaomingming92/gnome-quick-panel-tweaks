@@ -198,6 +198,19 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._spacers = spacers;
         box.add_style_class_name('quick-tweaks-row');
 
+        // 自检用：报告系统行在网格中的位置（GNOME 50 应排在最前 = 面板顶部那一行）
+        if (!this._loggedPosition) {
+            this._loggedPosition = true;
+            try {
+                const grid = Main.panel.statusArea.quickSettings.menu?._grid;
+                const items = grid?.get_children() ?? [];
+                console.log(`quick-panel-tweaks: 系统行在网格第 ${items.indexOf(systemItem)} 位` +
+                    `（共 ${items.length} 项，0 = 最前/顶部）`);
+            } catch (e) {
+                /* 忽略 */
+            }
+        }
+
         // shell 自带的两段弹性空白收起来，由我们按配置摆放
         for (const spacer of spacers)
             spacer.x_expand = false;

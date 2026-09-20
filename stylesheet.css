@@ -1,4 +1,4 @@
-/* 系统栏（快捷面板最下面那行）：收紧圆图标，让右侧放得下 5 个 */
+/* 系统栏（快捷面板顶部那一行）：收紧圆图标，让右侧放得下 5 个 */
 .quick-tweaks-row .icon-button {
     padding: 0.62em;
     min-height: 1.0em;
