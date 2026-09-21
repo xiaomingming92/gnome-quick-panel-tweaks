@@ -46,13 +46,6 @@
     color: #e95420;
 }
 
-/* 档位符号（行内、紧贴电池按钮右侧） */
-.quick-tweaks-row .quick-tweaks-profile-icon {
-    icon-size: 1em;
-    margin-left: -0.45em;   /* 靠近电池，视觉上像连在一起 */
-    margin-right: 0.1em;
-}
-
 /* 想让系统栏里的图标也用系统主色？取消下面这段注释即可
    （-st-accent-color 跟随主题主色；也可直接写死 hex，例如 Ubuntu 橙 #e95420、GNOME 蓝 #3584e4）
 

@@ -19,11 +19,6 @@ const UIMODE_SCREENCAST = 1;    // gnome-shell 的 UIMode.SCREENCAST（模块内
 const POWER_PROFILES = 'org.freedesktop.UPower.PowerProfiles';
 const POWER_PROFILES_PATH = '/org/freedesktop/UPower/PowerProfiles';
 const PROFILE_LABELS = {performance: '性能', balanced: '平衡', 'power-saver': '节能'};
-// 档位符号（插在电池图标与百分比之间）；balanced 用空槽位保持宽度不变
-const PROFILE_ICON_NAMES = {
-    'power-saver': 'profile-power-saver-symbolic',
-    'performance': 'profile-performance-symbolic',
-};
 const LONG_PRESS_MS = 500;      // 长按多久进入编辑态
 const DRAG_THRESHOLD = 8;       // 编辑态里移动多少像素算开始拖动
 const REMOVE_OFFSET = 44;       // 拖到该行上方这么多像素 = 移除
@@ -46,7 +41,7 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21g');
+        console.log('quick-panel-tweaks: loaded build 2026-09-21h');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -54,8 +49,6 @@ export default class QuickPanelTweaksExtension extends Extension {
         this._editButtons = [];
         this._screencastNotifyId = 0;
         this._pendingProfile = null;   // 连点切档时的“乐观值”，避免读缓存滞后一拍
-        this._profileSlot = null;      // 电池与百分比之间的档位符号槽位
-        this._profileIcon = null;
         this._press = null;
         this._longPressId = 0;
         this._drag = null;
@@ -110,10 +103,6 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         if (this._box)
             this._box.remove_style_class_name('quick-tweaks-row');
-        if (this._profileIcon?.get_parent())
-            this._profileIcon.get_parent().remove_child(this._profileIcon);
-        this._profileSlot = null;
-        this._profileIcon = null;
         if (this._screencastNotifyId && Main.screenshotUI) {
             Main.screenshotUI.disconnect(this._screencastNotifyId);
             this._screencastNotifyId = 0;
@@ -164,7 +153,6 @@ export default class QuickPanelTweaksExtension extends Extension {
             // 属性真的变了就把乐观值清掉，之后以缓存为准
             this._powerProfiles.connect('g-properties-changed', () => {
                 this._pendingProfile = null;
-                this._syncProfileIcon();
             });
         } catch (e) {
             this._powerProfiles = null;
@@ -227,12 +215,6 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         let index = 0;
         place(box, this._powerToggle, index++);
-        // B 方案：档位符号放在行里、紧贴电池按钮右侧
-        // （不往电池按钮内部插控件 —— 那会破坏 shell 的布局度量，导致快捷面板 DOM 在但不显示）
-        this._ensureProfileIcon();
-        if (this._profileIcon.get_parent() !== box)
-            box.add_child(this._profileIcon);
-        place(box, this._profileIcon, index++);
         this._flex = this._flex ?? new Clutter.Actor({x_expand: true});
         if (this._flex.get_parent() !== box)
             box.add_child(this._flex);
@@ -641,7 +623,6 @@ export default class QuickPanelTweaksExtension extends Extension {
         const current = this._pendingProfile ?? cached;
         const next = profiles[(Math.max(profiles.indexOf(current), -1) + 1) % profiles.length];
         this._pendingProfile = next;
-        this._syncProfileIcon(next);       // 先就地换符号，体感即时
         // Gio.DBusProxy.call 的签名是 (method, params, flags, timeout, cancellable, callback) 6 个参数，
         // 方法名要写成 "接口.方法" 的点号形式
         proxy.call('org.freedesktop.DBus.Properties.Set',
@@ -650,44 +631,13 @@ export default class QuickPanelTweaksExtension extends Extension {
             (p, res) => {
                 try {
                     p.call_finish(res);
+                    Main.notify('电源模式', `已切换到「${PROFILE_LABELS[next] ?? next}」`);
                 } catch (e) {
                     this._pendingProfile = null;
                     logError(e, 'quick-panel-tweaks: 切换电源模式失败');
                     Main.notify('电源模式', '切换失败，可右键打开电源设置');
                 }
             });
-    }
-
-    // 创建档位符号（真正的摆放由 _apply() 负责）
-    _ensureProfileIcon() {
-        if (this._profileIcon)
-            return;
-        this._profileIcon = new St.Icon({style_class: 'quick-tweaks-profile-icon'});
-        this._syncProfileIcon();
-    }
-
-    // 换档位符号：性能=仪表、节能=叶子、平衡=空（槽位宽度不变，不会跳动）
-    _syncProfileIcon(explicit) {
-        if (!this._profileIcon)
-            return;
-        const proxy = this._powerProfiles;
-        const current = explicit ??
-            this._pendingProfile ??
-            proxy?.get_cached_property('ActiveProfile')?.deep_unpack();
-        const name = PROFILE_ICON_NAMES[current];
-        if (!name) {
-            this._profileIcon.set({gicon: null});
-            return;
-        }
-        // 用文件图标（不依赖图标主题搜索路径），按深浅主题选对应着色版本
-        const dark = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'})
-            .get_string('color-scheme') === 'prefer-dark';
-        const file = GLib.build_filenamev([this.path, 'icons',
-            `${name}-${dark ? 'light' : 'dark'}.svg`]);
-        this._profileIcon.set({
-            gicon: Gio.FileIcon.new(Gio.File.new_for_path(file)),
-            icon_size: 16,
-        });
     }
 
     // ---------- 录屏 ----------
