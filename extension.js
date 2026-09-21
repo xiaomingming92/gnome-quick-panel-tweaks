@@ -46,13 +46,7 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21e');
-        // 扩展自带 icons/ 加入图标主题搜索路径（这样符号图标会被主题按符号样式着色）
-        try {
-            St.IconTheme.get_default().append_search_path(GLib.build_filenamev([this.path, 'icons']));
-        } catch (e) {
-            logError(e, 'quick-panel-tweaks: 注册图标目录失败');
-        }
+        console.log('quick-panel-tweaks: loaded build 2026-09-21f');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -666,12 +660,9 @@ export default class QuickPanelTweaksExtension extends Extension {
             return;
         const inner = this._powerToggle._box;
         this._profileIcon = new St.Icon({style_class: 'quick-tweaks-profile-icon'});
-        this._profileSlot = new St.Bin({
-            style_class: 'quick-tweaks-profile-slot',
-            child: this._profileIcon,
-        });
+        this._profileSlot = this._profileIcon;          // 直接用 St.Icon，避免额外容器影响度量
         const iconIndex = inner.get_children().indexOf(this._powerToggle._icon);
-        inner.insert_child_at_index(this._profileSlot,
+        inner.insert_child_at_index(this._profileIcon,
             iconIndex >= 0 ? iconIndex + 1 : inner.get_children().length);
         this._syncProfileIcon();
     }
@@ -684,8 +675,19 @@ export default class QuickPanelTweaksExtension extends Extension {
         const current = explicit ??
             this._pendingProfile ??
             proxy?.get_cached_property('ActiveProfile')?.deep_unpack();
+        const name = PROFILE_ICON_NAMES[current];
+        if (!name) {
+            this._profileIcon.set({gicon: null});
+            return;
+        }
+        // 用文件图标（不依赖图标主题搜索路径），按深浅主题选对应着色版本
+        const dark = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'})
+            .get_string('color-scheme') === 'prefer-dark';
+        const file = GLib.build_filenamev([this.path, 'icons',
+            `${name}-${dark ? 'light' : 'dark'}.svg`]);
         this._profileIcon.set({
-            icon_name: PROFILE_ICON_NAMES[current] ?? null,
+            gicon: Gio.FileIcon.new(Gio.File.new_for_path(file)),
+            icon_size: 16,
         });
     }
 

@@ -1,7 +1,8 @@
 UUID    := quick-panel-tweaks@xiaomingming92.github.io
 DEST    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 FILES   := metadata.json extension.js prefs.js config.js pool.js stylesheet.css
-ICONS   := icons/profile-power-saver-symbolic.svg icons/profile-performance-symbolic.svg
+ICONS   := icons/profile-power-saver-symbolic-light.svg icons/profile-power-saver-symbolic-dark.svg \
+           icons/profile-performance-symbolic-light.svg icons/profile-performance-symbolic-dark.svg
 
 .PHONY: help install uninstall enable disable pack log
 

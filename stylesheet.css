@@ -46,15 +46,10 @@
     color: #e95420;
 }
 
-/* 电池图标与百分比之间的档位符号（固定宽度，平衡档为空也不跳动） */
-.quick-tweaks-row .quick-tweaks-profile-slot {
-    min-width: 1.15em;
-    margin-left: -0.35em;
-}
-.quick-tweaks-row .quick-tweaks-profile-slot StIcon,
+/* 电池图标与百分比之间的档位符号（尽量不影响布局度量） */
 .quick-tweaks-row .quick-tweaks-profile-icon {
-    icon-size: 1.05em;
-    -st-icon-style: symbolic;   /* 走符号绘制，跟随主题前景色 */
+    icon-size: 0.95em;
+    margin-left: -0.2em;
 }
 
 /* 想让系统栏里的图标也用系统主色？取消下面这段注释即可
