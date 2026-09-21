@@ -20,9 +20,9 @@ const POWER_PROFILES = 'org.freedesktop.UPower.PowerProfiles';
 const POWER_PROFILES_PATH = '/org/freedesktop/UPower/PowerProfiles';
 const PROFILE_LABELS = {performance: '性能', balanced: '平衡', 'power-saver': '节能'};
 // 档位符号（插在电池图标与百分比之间）；balanced 用空槽位保持宽度不变
-const PROFILE_ICON_FILES = {
-    'power-saver': 'profile-power-saver-symbolic.svg',
-    'performance': 'profile-performance-symbolic.svg',
+const PROFILE_ICON_NAMES = {
+    'power-saver': 'profile-power-saver-symbolic',
+    'performance': 'profile-performance-symbolic',
 };
 const LONG_PRESS_MS = 500;      // 长按多久进入编辑态
 const DRAG_THRESHOLD = 8;       // 编辑态里移动多少像素算开始拖动
@@ -46,7 +46,13 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21d');
+        console.log('quick-panel-tweaks: loaded build 2026-09-21e');
+        // 扩展自带 icons/ 加入图标主题搜索路径（这样符号图标会被主题按符号样式着色）
+        try {
+            St.IconTheme.get_default().append_search_path(GLib.build_filenamev([this.path, 'icons']));
+        } catch (e) {
+            logError(e, 'quick-panel-tweaks: 注册图标目录失败');
+        }
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -678,11 +684,9 @@ export default class QuickPanelTweaksExtension extends Extension {
         const current = explicit ??
             this._pendingProfile ??
             proxy?.get_cached_property('ActiveProfile')?.deep_unpack();
-        const file = PROFILE_ICON_FILES[current];
-        this._profileIcon.gicon = file
-            ? Gio.FileIcon.new(Gio.File.new_for_path(
-                GLib.build_filenamev([this.path, 'icons', file])))
-            : null;
+        this._profileIcon.set({
+            icon_name: PROFILE_ICON_NAMES[current] ?? null,
+        });
     }
 
     // ---------- 录屏 ----------
