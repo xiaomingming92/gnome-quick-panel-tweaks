@@ -1,6 +1,7 @@
 UUID    := quick-panel-tweaks@xiaomingming92.github.io
 DEST    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 FILES   := metadata.json extension.js prefs.js config.js pool.js stylesheet.css
+ICONS   := icons/profile-power-saver-symbolic.svg icons/profile-performance-symbolic.svg
 
 .PHONY: help install uninstall enable disable pack log
 
@@ -14,6 +15,8 @@ help:
 install:
 	@mkdir -p $(DEST)
 	@cp $(FILES) $(DEST)/
+	@mkdir -p $(DEST)/icons
+	@cp $(ICONS) $(DEST)/icons/
 	@echo "✓ 已安装到 $(DEST)"
 	@echo "  改动生效：配置即时生效；JS 改动需要注销重登（Wayland 无法重启 Shell）"
 
