@@ -46,7 +46,7 @@ function place(parent, child, index) {
 export default class QuickPanelTweaksExtension extends Extension {
     enable() {
         // 版本标记：用来确认扩展是否真的热重载成功（无需注销就能在日志里核对）
-        console.log('quick-panel-tweaks: loaded build 2026-09-21f');
+        console.log('quick-panel-tweaks: loaded build 2026-09-21g');
         this._config = loadConfig();
         this._dynamic = new Map();     // id -> St.Button（录屏 + 自定义按钮）
         this._recording = false;
@@ -110,8 +110,8 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         if (this._box)
             this._box.remove_style_class_name('quick-tweaks-row');
-        if (this._profileSlot?.get_parent())
-            this._profileSlot.get_parent().remove_child(this._profileSlot);
+        if (this._profileIcon?.get_parent())
+            this._profileIcon.get_parent().remove_child(this._profileIcon);
         this._profileSlot = null;
         this._profileIcon = null;
         if (this._screencastNotifyId && Main.screenshotUI) {
@@ -227,8 +227,12 @@ export default class QuickPanelTweaksExtension extends Extension {
 
         let index = 0;
         place(box, this._powerToggle, index++);
-        // 档位符号：插进电池按钮内部，位于「电池图标」和「百分比」之间
-        this._ensureProfileSlot();
+        // B 方案：档位符号放在行里、紧贴电池按钮右侧
+        // （不往电池按钮内部插控件 —— 那会破坏 shell 的布局度量，导致快捷面板 DOM 在但不显示）
+        this._ensureProfileIcon();
+        if (this._profileIcon.get_parent() !== box)
+            box.add_child(this._profileIcon);
+        place(box, this._profileIcon, index++);
         this._flex = this._flex ?? new Clutter.Actor({x_expand: true});
         if (this._flex.get_parent() !== box)
             box.add_child(this._flex);
@@ -654,16 +658,11 @@ export default class QuickPanelTweaksExtension extends Extension {
             });
     }
 
-    // 在电池按钮内部插一个固定宽度的槽位： [电池图标][档位符号][百分比]
-    _ensureProfileSlot() {
-        if (this._profileSlot || !this._powerToggle?._box)
+    // 创建档位符号（真正的摆放由 _apply() 负责）
+    _ensureProfileIcon() {
+        if (this._profileIcon)
             return;
-        const inner = this._powerToggle._box;
         this._profileIcon = new St.Icon({style_class: 'quick-tweaks-profile-icon'});
-        this._profileSlot = this._profileIcon;          // 直接用 St.Icon，避免额外容器影响度量
-        const iconIndex = inner.get_children().indexOf(this._powerToggle._icon);
-        inner.insert_child_at_index(this._profileIcon,
-            iconIndex >= 0 ? iconIndex + 1 : inner.get_children().length);
         this._syncProfileIcon();
     }
 

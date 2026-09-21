@@ -46,10 +46,11 @@
     color: #e95420;
 }
 
-/* 电池图标与百分比之间的档位符号（尽量不影响布局度量） */
+/* 档位符号（行内、紧贴电池按钮右侧） */
 .quick-tweaks-row .quick-tweaks-profile-icon {
-    icon-size: 0.95em;
-    margin-left: -0.2em;
+    icon-size: 1em;
+    margin-left: -0.45em;   /* 靠近电池，视觉上像连在一起 */
+    margin-right: 0.1em;
 }
 
 /* 想让系统栏里的图标也用系统主色？取消下面这段注释即可
